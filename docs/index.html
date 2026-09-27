@@ -415,6 +415,7 @@ body.no-top .period,body.no-top .qadd{display:none;}
     <div style="display:flex;flex-direction:column;gap:8px;">
       <button class="acc-btn" style="padding:12px;font-size:13px;text-align:left" onclick="closeModal('settingsModal');loadData()">🔄 Обновить данные</button>
       <button class="acc-btn" style="padding:12px;font-size:13px;text-align:left" onclick="closeModal('settingsModal');showWelcome()">👋 Показать приветствие</button>
+      <button class="acc-btn" id="homeBtn" style="padding:12px;font-size:13px;text-align:left;display:none" onclick="addToHome()">📲 Добавить на главный экран</button>
       <button class="acc-btn" style="padding:12px;font-size:13px;text-align:left;color:var(--red);border-color:var(--red)" onclick="closeModal('settingsModal');clearLocal()">🧹 Очистить кэш на устройстве</button>
     </div>
     <div class="note">Время напоминаний, бюджеты и удаление всех данных — командами бота: /settings, /budget, /deletedata.</div>
@@ -1048,6 +1049,26 @@ function clearLocal(){
   ['fin_cache','fin_accounts','fin_chat'].forEach(k=>lsDel(ukey(k)));
   chatHist=[];toast('Кэш очищен');loadData();
 }
+// ── HOME SCREEN SHORTCUT (Telegram Bot API 8.0+) ───────────────────────────
+function tgApp(){return window.Telegram&&window.Telegram.WebApp;}
+function homeSupported(){const tg=tgApp();return !!(tg&&typeof tg.addToHomeScreen==='function'&&tg.isVersionAtLeast&&tg.isVersionAtLeast('8.0'));}
+function setupHomeButton(){
+  const btn=$('homeBtn');
+  if(!homeSupported()){btn.style.display='none';return;}
+  btn.style.display='block';
+  const tg=tgApp();
+  try{
+    tg.checkHomeScreenStatus(st=>{
+      if(st==='added'){btn.textContent='✅ Уже на главном экране';btn.disabled=true;}
+      else if(st==='unsupported'){btn.style.display='none';}
+    });
+    tg.onEvent('homeScreenAdded',()=>{toast('Иконка Moneta добавлена ✓');btn.textContent='✅ Уже на главном экране';btn.disabled=true;});
+  }catch(e){}
+}
+function addToHome(){
+  closeModal('settingsModal');
+  try{tgApp().addToHomeScreen();}catch(e){toast('Обновите Telegram, чтобы добавить иконку');}
+}
 function showSetup(msg){
   if(msg) $('setupMsg').textContent=msg;
   $('loading').style.display='none';$('app').style.display='none';$('setup').style.display='flex';
@@ -1059,7 +1080,7 @@ function launchApp(){
   $('app').style.display='block';
   cacheLoad();chatLoad();
   $('qDate').value=toIsoDay(new Date());
-  updateMonthLabel();renderChips();renderImpBanks();renderAll();
+  updateMonthLabel();renderChips();renderImpBanks();renderAll();setupHomeButton();
   setSyncStatus('Загрузка…','loading');
   loadData();
   if(!lsGet('fin_welcome_v2')) setTimeout(showWelcome,600);

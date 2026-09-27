@@ -18,7 +18,7 @@ try:
 except ImportError:
     XLSX_OK = False
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, MenuButtonWebApp
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
@@ -642,6 +642,13 @@ async def send_monthly_stats(app):
 
 
 async def post_init(application):
+    if WEBAPP_URL:
+        # Blue "Moneta" button next to the message field opens the mini app in one tap
+        try:
+            await application.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="Moneta", web_app=WebAppInfo(url=WEBAPP_URL)))
+        except Exception as e:
+            logger.warning(f"Menu button not set: {e}")
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
     tz = storage.TIMEZONE
