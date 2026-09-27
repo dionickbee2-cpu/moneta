@@ -5,6 +5,10 @@ import os
 import threading
 import logging
 
+# Configure logging before waitress.serve() calls basicConfig() at WARNING level
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per Telegram poll otherwise
+
 
 def run_api():
     from waitress import serve
