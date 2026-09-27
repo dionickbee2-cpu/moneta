@@ -1,0 +1,11 @@
+# secrets and personal data
+*.json
+.env
+expenses.csv
+Link to google sheet.txt
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
