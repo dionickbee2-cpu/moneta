@@ -7,7 +7,13 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <meta name="theme-color" content="#b8860b">
-<link rel="apple-touch-icon" href="https://fav.farm/💰">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Moneta">
 <title>Moneta</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -232,8 +238,8 @@ body.no-top .period,body.no-top .qadd{display:none;}
   <div class="setup-card">
     <div class="setup-logo">📱</div>
     <div class="setup-title">Откройте через Telegram</div>
-    <div class="setup-sub" id="setupMsg">Приложение работает только внутри Telegram — так ваши данные защищены без паролей.</div>
-    <div class="info-box">1. Откройте бота <b>@ExpensesDT_bot</b><br>2. Нажмите кнопку <b>📊 Открыть приложение</b></div>
+    <div class="setup-sub" id="setupMsg">Moneta открывается из Telegram-бота или по вашей личной ссылке — так данные защищены без паролей.</div>
+    <div class="info-box">1. Откройте бота <b>@ExpensesDT_bot</b><br>2. Нажмите кнопку <b>📊 Открыть приложение</b><br><br>Чтобы пользоваться Moneta как отдельным приложением без Telegram, отправьте боту <b>/app</b> — он пришлёт личную ссылку.</div>
     <a class="big-btn" href="https://t.me/ExpensesDT_bot" target="_blank">Открыть @ExpensesDT_bot →</a>
   </div>
 </div>
@@ -415,7 +421,8 @@ body.no-top .period,body.no-top .qadd{display:none;}
     <div style="display:flex;flex-direction:column;gap:8px;">
       <button class="acc-btn" style="padding:12px;font-size:13px;text-align:left" onclick="closeModal('settingsModal');loadData()">🔄 Обновить данные</button>
       <button class="acc-btn" style="padding:12px;font-size:13px;text-align:left" onclick="closeModal('settingsModal');showWelcome()">👋 Показать приветствие</button>
-      <button class="acc-btn" id="homeBtn" style="padding:12px;font-size:13px;text-align:left;display:none" onclick="addToHome()">📲 Добавить на главный экран</button>
+      <button class="acc-btn" id="installBtn" style="padding:12px;font-size:13px;text-align:left" onclick="installApp()">📲 Установить как приложение</button>
+      <button class="acc-btn" id="logoutBtn" style="padding:12px;font-size:13px;text-align:left;display:none" onclick="closeModal('settingsModal');logOut()">🚪 Выйти на этом устройстве</button>
       <button class="acc-btn" style="padding:12px;font-size:13px;text-align:left;color:var(--red);border-color:var(--red)" onclick="closeModal('settingsModal');clearLocal()">🧹 Очистить кэш на устройстве</button>
     </div>
     <div class="note">Время напоминаний, бюджеты и удаление всех данных — командами бота: /settings, /budget, /deletedata.</div>
@@ -470,6 +477,14 @@ body.no-top .period,body.no-top .qadd{display:none;}
   </div>
 </div>
 
+<!-- INSTALL MODAL -->
+<div class="modal-bg" id="installModal">
+  <div class="modal">
+    <div class="modal-head"><span class="modal-title">📲 Moneta на экране «Домой»</span><button class="modal-x" onclick="closeModal('installModal')">×</button></div>
+    <div id="installBody"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -496,7 +511,7 @@ let curY=now.getFullYear(), curM=now.getMonth();
 let period='month', qType='expense', selCat=null;
 let editTxId=null, editAccId=null, charts={};
 let allTxs=[], allAccs=[];
-let TG_INIT='', TG_USER_ID='';
+let TG_INIT='', TG_USER_ID='', AUTH_TOKEN='';
 
 // ── HELPERS ────────────────────────────────────────────────────────────────
 const $=id=>document.getElementById(id);
@@ -541,7 +556,7 @@ function fillCatSelect(sel,type,current){
 // ── API ────────────────────────────────────────────────────────────────────
 class ApiError extends Error{constructor(msg,status){super(msg);this.status=status;}}
 async function api(path,opts={}){
-  const headers={'X-Telegram-Init-Data':TG_INIT};
+  const headers=TG_INIT?{'X-Telegram-Init-Data':TG_INIT}:{'Authorization':'Bearer '+AUTH_TOKEN};
   let body=opts.body;
   if(opts.json!==undefined){headers['Content-Type']='application/json';body=JSON.stringify(opts.json);}
   let resp;
@@ -549,7 +564,10 @@ async function api(path,opts={}){
   catch(e){throw new ApiError('Нет связи с сервером',0);}
   let data={};try{data=await resp.json();}catch(e){}
   if(!resp.ok){
-    if(resp.status===401) showSetup('Сессия Telegram устарела или недействительна. Закройте и снова откройте приложение из бота.');
+    if(resp.status===401){
+      if(TG_INIT) showSetup('Сессия Telegram устарела. Закройте и снова откройте приложение из бота.');
+      else{lsDel(TOKEN_KEY);showSetup('Ссылка устарела или была отключена. Отправьте боту /app, чтобы получить новую.');}
+    }
     throw new ApiError(data.error||('Ошибка сервера '+resp.status),resp.status);
   }
   return data;
@@ -1049,25 +1067,48 @@ function clearLocal(){
   ['fin_cache','fin_accounts','fin_chat'].forEach(k=>lsDel(ukey(k)));
   chatHist=[];toast('Кэш очищен');loadData();
 }
-// ── HOME SCREEN SHORTCUT (Telegram Bot API 8.0+) ───────────────────────────
-function tgApp(){return window.Telegram&&window.Telegram.WebApp;}
-function homeSupported(){const tg=tgApp();return !!(tg&&typeof tg.addToHomeScreen==='function'&&tg.isVersionAtLeast&&tg.isVersionAtLeast('8.0'));}
-function setupHomeButton(){
-  const btn=$('homeBtn');
-  if(!homeSupported()){btn.style.display='none';return;}
-  btn.style.display='block';
-  const tg=tgApp();
-  try{
-    tg.checkHomeScreenStatus(st=>{
-      if(st==='added'){btn.textContent='✅ Уже на главном экране';btn.disabled=true;}
-      else if(st==='unsupported'){btn.style.display='none';}
-    });
-    tg.onEvent('homeScreenAdded',()=>{toast('Иконка Moneta добавлена ✓');btn.textContent='✅ Уже на главном экране';btn.disabled=true;});
-  }catch(e){}
-}
-function addToHome(){
+// ── STANDALONE APP (personal link, works outside Telegram) ─────────────────
+const TOKEN_KEY='moneta_token';
+const IS_IOS=/iPhone|iPad|iPod/.test(navigator.userAgent);
+function isStandalone(){return window.matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;}
+const INSTALL_STEPS=IS_IOS
+  ?'<div class="info-box"><b>iPhone / iPad (Safari):</b><br>1. Нажмите «Поделиться» <b>⬆︎</b> внизу экрана<br>2. Выберите <b>«На экран «Домой»»</b><br>3. Нажмите «Добавить»</div>'
+  :'<div class="info-box"><b>Android (Chrome):</b><br>1. Нажмите меню <b>⋮</b><br>2. Выберите <b>«Установить приложение»</b> или «Добавить на главный экран»</div>';
+async function installApp(){
   closeModal('settingsModal');
-  try{tgApp().addToHomeScreen();}catch(e){toast('Обновите Telegram, чтобы добавить иконку');}
+  const tg=window.Telegram&&window.Telegram.WebApp;
+  if(TG_INIT){
+    // Inside Telegram: get a personal link and open it in the real browser, where it can be installed
+    try{
+      const r=await api('/api/session/link',{method:'POST'});
+      if(tg&&typeof tg.openLink==='function'){tg.openLink(r.url);}
+      else window.open(r.url,'_blank');
+      $('installBody').innerHTML='<div class="info-box">Moneta откроется в браузере по вашей личной ссылке. Если браузер не открылся — отправьте боту <b>/app</b>.</div>'+
+        '<div class="info-box"><b>iPhone:</b> если ссылка открылась внутри Telegram — нажмите ⋯ → «Открыть в Safari». Затем «Поделиться» ⬆︎ → «На экран «Домой»».</div>'+
+        '<div class="info-box"><b>Android:</b> в Chrome нажмите ⋮ → «Установить приложение».</div>'+
+        '<div class="note">Ссылка — ключ к вашим данным на 180 дней. Не пересылайте её; отключить все ссылки — командой /logoutall.</div>';
+      openModal('installModal');
+    }catch(e){toast(e.message);}
+    return;
+  }
+  $('installBody').innerHTML=isStandalone()
+    ?'<div class="info-box">✅ Moneta уже открыта как приложение.</div>'
+    :INSTALL_STEPS+'<div class="note">Иконка Moneta появится на рабочем столе и будет открываться без Telegram и без адресной строки.</div>';
+  openModal('installModal');
+}
+function logOut(){
+  lsDel(TOKEN_KEY);AUTH_TOKEN='';
+  ['fin_cache','fin_accounts','fin_chat'].forEach(k=>lsDel(ukey(k)));
+  history.replaceState(null,'',location.pathname+location.search);
+  showSetup('Вы вышли на этом устройстве. Чтобы войти снова, отправьте боту /app.');
+}
+function tokenUid(t){
+  try{const b=t.split('.')[0].replace(/-/g,'+').replace(/_/g,'/');return String(JSON.parse(atob(b+'==='.slice((b.length+3)%4))).u||'');}catch(e){return '';}
+}
+function readLinkToken(){
+  const m=location.hash.match(/[#&]t=([\w.-]+)/);
+  if(m){lsSet(TOKEN_KEY,m[1]);return m[1];}
+  return lsGet(TOKEN_KEY)||'';
 }
 function showSetup(msg){
   if(msg) $('setupMsg').textContent=msg;
@@ -1080,7 +1121,8 @@ function launchApp(){
   $('app').style.display='block';
   cacheLoad();chatLoad();
   $('qDate').value=toIsoDay(new Date());
-  updateMonthLabel();renderChips();renderImpBanks();renderAll();setupHomeButton();
+  updateMonthLabel();renderChips();renderImpBanks();renderAll();
+  $('logoutBtn').style.display=TG_INIT?'none':'block';
   setSyncStatus('Загрузка…','loading');
   loadData();
   if(!lsGet('fin_welcome_v2')) setTimeout(showWelcome,600);
@@ -1094,6 +1136,11 @@ function init(tries){
     launchApp();
   }else if(tries>0){
     setTimeout(()=>init(tries-1),250);
+  }else if((AUTH_TOKEN=readLinkToken())){
+    TG_USER_ID=tokenUid(AUTH_TOKEN);
+    // Keep the key in the address: iOS copies the current URL (not storage) into a home-screen app
+    if(!location.hash.includes('t=')) history.replaceState(null,'',location.pathname+location.search+'#t='+AUTH_TOKEN);
+    launchApp();
   }else{
     showSetup();
   }

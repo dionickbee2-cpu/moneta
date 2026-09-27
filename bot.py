@@ -23,6 +23,7 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 import ai
+import sessions
 import storage
 from storage import EXPENSE_CATS, INCOME_CATS, cat_label, now_local, safe_float
 
@@ -178,6 +179,8 @@ HELP_TEXT = (
     "/budget <code>категория лимит</code> — бюджет на месяц\n"
     "/settings <code>ЧЧ:ММ</code> — время напоминания\n"
     "/export, /exportxls — выгрузка CSV / Excel\n"
+    "/app — открыть Moneta как отдельное приложение\n"
+    "/logoutall — отключить все выданные ссылки на приложение\n"
     "/deletedata — удалить все данные\n\n"
     "📷 Импорт скринов из банка и чат с Финном — в приложении (кнопка «Открыть приложение»)."
 )
@@ -400,6 +403,36 @@ async def deletedata_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "⚠️ <b>Точно?</b>\n\nВсе ваши записи, бюджеты и настройки будут удалены безвозвратно.",
         parse_mode=HTML, reply_markup=keyboard,
     )
+
+
+INSTALL_TEXT = (
+    "📲 <b>Moneta как отдельное приложение</b>\n\n"
+    "Кнопка ниже — ваша личная ссылка: она открывает Moneta в браузере без Telegram.\n\n"
+    "<b>iPhone:</b> откройте ссылку в <b>Safari</b> (в Telegram: ⋯ → «Открыть в Safari»), "
+    "затем «Поделиться» → «На экран «Домой»».\n"
+    "<b>Android:</b> откройте в Chrome → ⋮ → «Добавить на главный экран» / «Установить приложение».\n\n"
+    "⚠️ Ссылка — это ключ к вашим данным на 180 дней, не пересылайте её. "
+    "Отключить все ссылки: /logoutall"
+)
+
+
+@guard
+async def app_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    if not WEBAPP_URL:
+        await msg.reply_text("Адрес приложения не настроен (WEBAPP_URL).")
+        return
+    token = await run(sessions.make_token, update.effective_user.id)
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🌐 Открыть Moneta в браузере",
+                                                           url=f"{WEBAPP_URL}#t={token}")]])
+    await msg.reply_text(INSTALL_TEXT, parse_mode=HTML, reply_markup=keyboard)
+
+
+@guard
+async def logoutall_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await run(sessions.revoke_all, update.effective_user.id)
+    await update.effective_message.reply_text(
+        "🔒 Все ссылки на приложение отключены. Новую можно получить командой /app.")
 
 
 @guard
@@ -672,7 +705,8 @@ def main():
     for name, fn in [("start", start), ("help", help_cmd), ("stats", stats_cmd), ("compare", compare_cmd),
                      ("export", export_cmd), ("exportxls", exportxls_cmd), ("find", find_cmd),
                      ("last", last_cmd), ("budget", budget_cmd), ("settings", settings_cmd),
-                     ("deletedata", deletedata_cmd), ("finn", finn_cmd)]:
+                     ("deletedata", deletedata_cmd), ("finn", finn_cmd),
+                     ("app", app_cmd), ("logoutall", logoutall_cmd)]:
         app.add_handler(CommandHandler(name, fn))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

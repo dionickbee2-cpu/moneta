@@ -17,6 +17,7 @@ from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 
 import ai
+import sessions
 import storage
 
 logger = logging.getLogger(__name__)
@@ -26,10 +27,11 @@ DEV_USER_ID = os.getenv("DEV_USER_ID", "")  # local testing only: skips initData
 # Auth is a signed header, not a cookie, so CORS is not a security boundary here
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGIN", "*").split(",") if o.strip()]
 INIT_DATA_MAX_AGE = 24 * 3600
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://dionickbee2-cpu.github.io/moneta/")
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
-CORS(app, origins=ALLOWED_ORIGINS, allow_headers=["Content-Type", "X-Telegram-Init-Data"],
+CORS(app, origins=ALLOWED_ORIGINS, allow_headers=["Content-Type", "X-Telegram-Init-Data", "Authorization"],
      methods=["GET", "POST", "PATCH", "DELETE"])
 
 
@@ -60,17 +62,26 @@ def verify_init_data(init_data: str, token: str, now: float = None):
     return user
 
 
+def current_user_id():
+    """Telegram initData inside Telegram, or a personal link token (Bearer) in a browser."""
+    user = verify_init_data(request.headers.get("X-Telegram-Init-Data", ""), TELEGRAM_TOKEN)
+    if user:
+        return user["id"]
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return sessions.verify_token(auth[7:])
+    if DEV_USER_ID:
+        return int(DEV_USER_ID)
+    return None
+
+
 def require_user(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        user = verify_init_data(request.headers.get("X-Telegram-Init-Data", ""), TELEGRAM_TOKEN)
-        if user:
-            g.uid = user["id"]
-        elif DEV_USER_ID:
-            g.uid = int(DEV_USER_ID)
-        else:
-            return jsonify({"error": "Откройте приложение через Telegram-бота."}), 401
         try:
+            g.uid = current_user_id()
+            if g.uid is None:
+                return jsonify({"error": "Откройте приложение через Telegram-бота или по личной ссылке из команды /app."}), 401
             return fn(*args, **kwargs)
         except storage.UserLimitError:
             return jsonify({"error": "Достигнут лимит пользователей бота."}), 503
@@ -248,6 +259,13 @@ def chat():
     ai.take_quota(g.uid, "chat")
     reply = ai.chat(storage.read_rows(g.uid), messages)
     return jsonify({"reply": reply})
+
+
+@app.route("/api/session/link", methods=["POST"])
+@require_user
+def session_link():
+    """Personal link that opens the app in a browser, so it can be installed on the home screen."""
+    return jsonify({"url": f"{WEBAPP_URL}#t={sessions.make_token(g.uid)}"})
 
 
 # ── ACCOUNTS ──────────────────────────────────────────────────────────────────

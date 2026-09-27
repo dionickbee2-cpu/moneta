@@ -1,0 +1,13 @@
+{
+  "name": "Moneta — учёт расходов",
+  "short_name": "Moneta",
+  "description": "Учёт расходов и доходов с ИИ: импорт скринов банков и помощник Финн",
+  "display": "standalone",
+  "background_color": "#f5f4f0",
+  "theme_color": "#b8860b",
+  "lang": "ru",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
