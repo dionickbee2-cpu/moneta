@@ -2,11 +2,12 @@
 Main entry point — runs the Telegram bot and the API server in one process
 """
 import os
+import sys
 import threading
 import logging
 
 # Configure logging before waitress.serve() calls basicConfig() at WARNING level
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per Telegram poll otherwise
 
 
