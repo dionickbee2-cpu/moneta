@@ -79,6 +79,27 @@ def test_empty_body(client):
     assert client.post("/api/transactions", data="x", content_type="text/plain").status_code == 400
 
 
+JPEG = b"\xff\xd8\xff\xe0fake"
+
+
+def run_job(client, data):
+    """Start an import job and wait for it (jobs run in a background thread)."""
+    import io
+    import time
+    form = {k: v for k, v in data.items() if k != "files"}
+    form["files"] = [(io.BytesIO(body), name) for name, body in data["files"]]
+    r = client.post("/api/import/parse", data=form, content_type="multipart/form-data")
+    if r.status_code != 202:
+        return r
+    job_id = r.json["job_id"]
+    for _ in range(200):
+        r = client.get(f"/api/import/jobs/{job_id}")
+        if r.json["status"] != "running":
+            return r
+        time.sleep(0.02)
+    raise AssertionError("job did not finish")
+
+
 def test_import_flow(client, monkeypatch):
     storage.add_transaction(UID, storage.parse_date("01.09.2026"), 12.0, "☕ Cafe", "coffee", "expense")
     fake = [{"date": "01.09.2026", "amount": 12.0, "type": "expense", "description": "Cafe",
@@ -87,13 +108,18 @@ def test_import_flow(client, monkeypatch):
              "category": "🛒 Groceries", "account": "Revolut"},
             {"date": "02.09.2026", "amount": 30.5, "type": "expense", "description": "REWE",
              "category": "🛒 Groceries", "account": "Revolut"}]
-    monkeypatch.setattr(ai, "parse_screenshots", lambda images, account: [dict(f) for f in fake])
-    import io
-    r = client.post("/api/import/parse", data={"account": "Revolut",
-                                                "images": [(io.BytesIO(b"\xff\xd8\xff..."), "a.jpg")]},
-                    content_type="multipart/form-data")
-    assert r.status_code == 200
+    seen = {}
+
+    def fake_parse(files, date_from):
+        seen.update(files=files, date_from=date_from)
+        return [dict(f) for f in fake]
+    monkeypatch.setattr(ai, "parse_statement", fake_parse)
+    r = run_job(client, {"date_from": "01.08.2026",
+                         "files": [("a.jpg", JPEG), ("s.pdf", b"%PDF-1.7 x"), ("r.csv", b"Date,Amount\n")]})
+    assert r.status_code == 200 and r.json["status"] == "done"
     assert [t["duplicate"] for t in r.json["transactions"]] == [True, False, True]
+    assert [n for n, _ in seen["files"]] == ["a.jpg", "s.pdf", "r.csv"]
+    assert str(seen["date_from"]) == "2026-08-01"
 
     r = client.post("/api/import/commit", json={"transactions": [r.json["transactions"][1]]})
     assert r.json["saved"] == 1
@@ -101,12 +127,28 @@ def test_import_flow(client, monkeypatch):
     assert {(t["description"], t["account"], t["source"]) for t in txs} >= {("REWE", "Revolut", "import")}
 
 
+def test_import_job_errors_and_refund(client, monkeypatch):
+    def boom(files, date_from):
+        raise ai.AIError("ИИ временно недоступен")
+    monkeypatch.setattr(ai, "parse_statement", boom)
+    r = run_job(client, {"files": [("a.jpg", JPEG)]})
+    assert r.json == {"status": "error", "error": "ИИ временно недоступен", "elapsed": r.json["elapsed"]}
+    assert ai._usage.get(("import", UID), (None, 0))[1] == 0  # quota refunded
+    # other users cannot read someone else's job
+    assert client.get("/api/import/jobs/nope").status_code == 404
+
+
+def test_import_rejects_bad_files(client):
+    import io
+    r = client.post("/api/import/parse", data={"files": [(io.BytesIO(b"\x00\x01binary"), "x.bin")]},
+                    content_type="multipart/form-data")
+    assert r.status_code == 400 and "PDF" in r.json["error"]
+
+
 def test_import_quota(client, monkeypatch):
     monkeypatch.setattr(ai, "DAILY_IMPORTS", 1)
-    monkeypatch.setattr(ai, "parse_screenshots", lambda images, account: [])
-    import io
-    data = lambda: {"images": [(io.BytesIO(b"x"), "a.jpg"), (io.BytesIO(b"y"), "b.jpg")]}
-    r = client.post("/api/import/parse", data=data(), content_type="multipart/form-data")
+    monkeypatch.setattr(ai, "parse_statement", lambda files, date_from: [])
+    r = run_job(client, {"files": [("a.jpg", JPEG), ("b.jpg", JPEG)]})
     assert r.status_code == 502 and "лимит" in r.json["error"]
 
 

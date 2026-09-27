@@ -10,6 +10,7 @@ import math
 import time
 import hashlib
 import logging
+import threading
 from functools import wraps
 from urllib.parse import parse_qsl
 
@@ -223,18 +224,70 @@ def mark_duplicates(candidates: list, existing: list) -> list:
     return candidates
 
 
+# Recognition takes up to a few minutes, longer than a phone keeps a request open,
+# so it runs in a background job that the app polls.
+IMPORT_JOB_TTL = 3600
+_jobs = {}  # job id -> {"uid", "status": running|done|error, "result", "error", "created"}
+_jobs_lock = threading.Lock()
+
+
+def _run_import(job_id: str, uid: int, files: list, date_from):
+    try:
+        candidates = ai.parse_statement(files, date_from)
+        update = {"status": "done", "result": mark_duplicates(candidates, storage.read_rows(uid))}
+    except ai.AIError as e:
+        ai.refund_quota(uid, "import", len(files))
+        update = {"status": "error", "error": str(e)}
+    except storage.StorageError:
+        update = {"status": "error", "error": "Хранилище временно недоступно, попробуйте позже."}
+    except Exception:
+        logger.exception("Import job failed")
+        ai.refund_quota(uid, "import", len(files))
+        update = {"status": "error", "error": "Не удалось обработать файлы, попробуйте ещё раз."}
+    with _jobs_lock:
+        _jobs[job_id].update(update)
+
+
 @app.route("/api/import/parse", methods=["POST"])
 @require_user
 def import_parse():
-    files = request.files.getlist("images")
-    if not files:
-        raise BadInput("Прикрепите хотя бы один скрин.")
-    if len(files) > ai.MAX_IMAGES:
-        raise BadInput(f"Не больше {ai.MAX_IMAGES} скринов за раз.")
+    uploads = request.files.getlist("files") or request.files.getlist("images")
+    if not uploads:
+        raise BadInput("Прикрепите хотя бы один скрин, PDF или CSV.")
+    files = [(f.filename or "file", f.read()) for f in uploads]
+    try:
+        ai.file_blocks(files)  # validate types and sizes before spending quota
+    except ai.AIError as e:
+        raise BadInput(str(e))
+    date_from = v_date(request.form["date_from"]) if request.form.get("date_from") else None
+    now = time.time()
+    with _jobs_lock:
+        for jid in [j for j, job in _jobs.items() if now - job["created"] > IMPORT_JOB_TTL]:
+            del _jobs[jid]
+        running = next((j for j, job in _jobs.items() if job["uid"] == g.uid and job["status"] == "running"), None)
+    if running:
+        return jsonify({"job_id": running, "already_running": True}), 202
     ai.take_quota(g.uid, "import", len(files))
-    images = [f.read() for f in files]
-    candidates = ai.parse_screenshots(images, v_text(request.form.get("account"), 40))
-    return jsonify({"transactions": mark_duplicates(candidates, storage.read_rows(g.uid))})
+    job_id = storage.new_id() + storage.new_id()
+    with _jobs_lock:
+        _jobs[job_id] = {"uid": g.uid, "status": "running", "created": now}
+    threading.Thread(target=_run_import, args=(job_id, g.uid, files, date_from), daemon=True).start()
+    return jsonify({"job_id": job_id}), 202
+
+
+@app.route("/api/import/jobs/<job_id>", methods=["GET"])
+@require_user
+def import_job(job_id):
+    with _jobs_lock:
+        job = dict(_jobs.get(job_id) or {})
+    if not job or job["uid"] != g.uid:
+        return jsonify({"status": "error", "error": "Задача не найдена — загрузите файлы ещё раз."}), 404
+    body = {"status": job["status"], "elapsed": int(time.time() - job["created"])}
+    if job["status"] == "done":
+        body["transactions"] = job["result"]
+    elif job["status"] == "error":
+        body["error"] = job["error"]
+    return jsonify(body)
 
 
 @app.route("/api/import/commit", methods=["POST"])

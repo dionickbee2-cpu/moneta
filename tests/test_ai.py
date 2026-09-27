@@ -49,7 +49,25 @@ def test_build_context():
     assert "05.09.2026; 20.00; expense; Cafe; Coffee; Revolut" in ctx
 
 
-def test_media_type():
-    assert ai._media_type(b"\xff\xd8\xff\xe0") == "image/jpeg"
+def test_file_blocks():
+    blocks = ai.file_blocks([
+        ("shot.jpg", b"\xff\xd8\xff\xe0jpeg"),
+        ("statement.pdf", b"%PDF-1.7 ..."),
+        ("revolut.csv", "Type,Started Date,Description,Amount\nCARD_PAYMENT,2026-09-01,REWE,-12.50\n".encode("utf-8-sig")),
+        ("sparkasse.csv", "Buchungstag;Betrag\n01.09.26;-3,20\n".encode("cp1252")),
+    ])
+    assert [b["type"] for b in blocks] == ["image", "document", "text", "text"]
+    assert blocks[1]["source"]["media_type"] == "application/pdf"
+    assert "REWE,-12.50" in blocks[2]["text"] and not blocks[2]["text"].count("\ufeff")
+    assert "Buchungstag;Betrag" in blocks[3]["text"]
     with pytest.raises(ai.AIError):
-        ai._media_type(b"%PDF-1.4")
+        ai.file_blocks([("x.bin", b"\x00\x01\x02")])
+    with pytest.raises(ai.AIError):
+        ai.file_blocks([("a.jpg", b"\xff\xd8\xff")] * 11)
+
+
+def test_date_from_filter():
+    items = [{"date": "2026-07-31", "amount": 1, "type": "expense", "merchant": "old", "category": "Cafe", "account": ""},
+             {"date": "2026-08-01", "amount": 2, "type": "expense", "merchant": "new", "category": "Cafe", "account": ""}]
+    out = ai.clean_candidates(items, TODAY, date(2026, 8, 1))
+    assert [t["description"] for t in out] == ["new"]

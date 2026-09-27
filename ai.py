@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5")
 DAILY_IMPORTS = int(os.getenv("AI_DAILY_IMPORTS", "30"))   # screenshots per user per day
 DAILY_CHATS = int(os.getenv("AI_DAILY_CHATS", "40"))       # chat messages per user per day
-MAX_IMAGES = 10
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 # Server-side refusal fallbacks are documented for Opus/Fable only
 USE_FALLBACKS = MODEL.startswith(("claude-opus-5", "claude-fable"))
@@ -42,20 +41,22 @@ def _get_client():
 
 
 def _call(**kwargs):
-    """Messages API call (with server-side refusal fallbacks where supported); returns the text."""
+    """Messages API call (with server-side refusal fallbacks where supported); returns the text.
+    Streams so that long statements with large outputs do not hit HTTP timeouts."""
     if USE_FALLBACKS:
         kwargs.update(betas=[FALLBACK_BETA], fallbacks="default")
     try:
-        resp = _get_client().beta.messages.create(
+        with _get_client().beta.messages.stream(
             model=MODEL,
             thinking={"type": "adaptive"},
             **kwargs,
-        )
+        ) as stream:
+            resp = stream.get_final_message()
     except anthropic.RateLimitError:
         raise AIError("ИИ сейчас перегружен, попробуйте через минуту.")
     except anthropic.BadRequestError as e:
         logger.error(f"Claude bad request: {e.message}")
-        raise AIError("ИИ не смог обработать запрос.")
+        raise AIError("ИИ не смог обработать файл — проверьте, что это выписка или скрин из банка.")
     except anthropic.APIStatusError as e:
         logger.error(f"Claude API error {e.status_code}: {e.message}")
         raise AIError("ИИ временно недоступен, попробуйте позже.")
@@ -66,7 +67,7 @@ def _call(**kwargs):
     if resp.stop_reason == "refusal":
         raise AIError("ИИ отказался обрабатывать этот запрос.")
     if resp.stop_reason == "max_tokens":
-        raise AIError("Слишком много данных за раз — отправьте меньше скринов.")
+        raise AIError("Слишком много операций за раз — выберите период короче или загрузите меньше файлов.")
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     if not text:
         raise AIError("ИИ вернул пустой ответ, попробуйте ещё раз.")
@@ -91,7 +92,18 @@ def take_quota(uid: int, kind: str, amount: int = 1):
         _usage[(kind, uid)] = (today, used + amount)
 
 
-# ── SCREENSHOT IMPORT ─────────────────────────────────────────────────────────
+def refund_quota(uid: int, kind: str, amount: int = 1):
+    """Give back quota taken for a request that failed."""
+    with _usage_lock:
+        day, used = _usage.get((kind, uid), (None, 0))
+        if day is not None:
+            _usage[(kind, uid)] = (day, max(0, used - amount))
+
+
+# ── STATEMENT IMPORT (screenshots, PDF, CSV) ──────────────────────────────────
+MAX_FILES = 10
+MAX_PDF_BYTES = 15 * 1024 * 1024
+MAX_TEXT_BYTES = 3 * 1024 * 1024
 EXPENSE_NAMES = [storage.plain_cat(c) for c in storage.EXPENSE_CATS]
 INCOME_NAMES = [storage.plain_cat(c) for c in storage.INCOME_CATS]
 
@@ -108,7 +120,7 @@ IMPORT_SCHEMA = {
                 "required": ["date", "amount", "type", "merchant", "category", "account"],
                 "properties": {
                     "date": {"type": "string", "description": "YYYY-MM-DD"},
-                    "amount": {"type": "number", "description": "Positive amount in EUR"},
+                    "amount": {"type": "number", "description": "Positive amount"},
                     "type": {"type": "string", "enum": ["expense", "income", "transfer"]},
                     "merchant": {"type": "string"},
                     "category": {"type": "string", "enum": EXPENSE_NAMES + INCOME_NAMES},
@@ -119,21 +131,21 @@ IMPORT_SCHEMA = {
     },
 }
 
-IMPORT_PROMPT = """Ты извлекаешь операции со скриншотов банковских приложений (Revolut, Sparkasse и других) для учёта личных финансов.
+IMPORT_PROMPT = """Ты извлекаешь банковские операции для учёта личных финансов. Источники выше: скриншоты банковских приложений, PDF-выписки (Kontoauszug) и/или CSV-экспорты (Revolut, Sparkasse и другие банки).
 
-Сегодня {today}. Банк, выбранный пользователем: {account}.
+Сегодня {today}. {period}
 
 Правила:
-- Верни каждую завершённую операцию, видимую на скринах, ровно один раз. Если одна и та же операция видна на двух скринах (одинаковые дата, сумма и получатель), верни её один раз.
-- Пропускай операции в статусе pending/ausstehend/vorgemerkt, отклонённые (declined/abgelehnt) и возвращённые (reverted).
-- date — дата операции в формате YYYY-MM-DD. Если год не указан («12 Sep», «12. Sept.», «Heute», «Gestern», «Today», «Yesterday»), вычисли дату от сегодняшней; дата не может быть в будущем — тогда это прошлый год. Заголовок группы с датой относится ко всем операциям под ним.
-- amount — положительное число в евро. Немецкий формат «1.234,56 €» = 1234.56. Минус или «Lastschrift/Kartenzahlung» = расход, плюс или «Gutschrift/Eingang» = доход.
-- type = "transfer" для переводов между собственными счетами пользователя: пополнение Revolut (Top-up, «Aufladung», «Revolut**»), перевод с/на свой Sparkasse, «Übertrag», «To pocket/savings», обмен валют. В остальных случаях — expense или income.
-- merchant — короткое понятное имя получателя или отправителя (например «REWE», «Netflix», «Arbeitgeber GmbH»), без номеров карт и IBAN.
+- Верни каждую завершённую операцию ровно один раз. Если одна и та же операция встречается в нескольких источниках (одинаковые дата, сумма и получатель), верни её один раз.
+- Пропускай операции в статусе pending/ausstehend/vorgemerkt, отклонённые (declined/abgelehnt/DECLINED), возвращённые (REVERTED) и строки итогов/остатков (Saldo, Kontostand, Anfangs-/Endsaldo).
+- date — дата операции в формате YYYY-MM-DD. В CSV Revolut бери «Completed Date» (или «Started Date»), в Sparkasse — «Buchungstag». Если год не указан («12 Sep», «Heute», «Gestern», «Today»), вычисли дату от сегодняшней; дата не может быть в будущем — тогда это прошлый год. Заголовок группы с датой относится ко всем операциям под ним.
+- amount — положительное число. Немецкий формат «1.234,56» = 1234.56. Минус, «Lastschrift», «Kartenzahlung», «Soll» = расход; плюс, «Gutschrift», «Eingang», «Haben» = доход. Комиссию (Fee) прибавь к сумме расхода. Если валюта не EUR, оставь сумму как есть и добавь код валюты в merchant (например «Starbucks (USD)»).
+- type = "transfer" для переводов между собственными счетами пользователя: пополнение Revolut (Top-up, «Aufladung», «Revolut**»), перевод с/на свой счёт, «Übertrag», «Umbuchung», «To pocket/savings», обмен валют (Exchange). В остальных случаях — expense или income.
+- merchant — короткое понятное имя получателя или отправителя (например «REWE», «Netflix», «Arbeitgeber GmbH»), без номеров карт, IBAN и служебных кодов.
 - category — одна из допустимых. Для расходов: {expense}. Для доходов: {income}. Для transfer выбирай «Other».
-  Подсказки: супермаркеты (REWE, Lidl, Aldi, Edeka, Kaufland, Penny, Netto, dm, Rossmann) → Groceries; кафе/кофейни/пекарни → Cafe; рестораны/доставка еды (Lieferando, Wolt) → Dining; DB, BVG, MVG, Uber, Bolt, АЗС → Transport; Netflix, Spotify, Apple, Google, мобильная связь → Subscriptions; аптеки/врачи → Health; Miete → Rent; Amazon — по смыслу, иначе Other; брокеры (Trade Republic, Scalable) → Investments; Gehalt/Lohn → Salary.
-- account — «Revolut», «Sparkasse» или название банка по оформлению скрина; если не видно — {account_fallback}.
-- Не выдумывай операции. Если скрины не банковские, верни пустой список."""
+  Подсказки: супермаркеты (REWE, Lidl, Aldi, Edeka, Kaufland, Penny, Netto, dm, Rossmann) → Groceries; кафе/кофейни/пекарни → Cafe; рестораны/доставка еды (Lieferando, Wolt) → Dining; DB, BVG, MVG, Uber, Bolt, АЗС → Transport; Netflix, Spotify, Apple, Google, мобильная связь → Subscriptions; аптеки/врачи/Krankenkasse → Health; Miete → Rent; Amazon — по смыслу, иначе Other; брокеры (Trade Republic, Scalable) → Investments; Gehalt/Lohn → Salary.
+- account — банк, из которого операция («Revolut», «Sparkasse» и т. п.), определи по оформлению или содержимому файла; если не понять — пустая строка.
+- Не выдумывай операции. Если в источниках нет банковских операций, верни пустой список."""
 
 
 def _media_type(data: bytes) -> str:
@@ -145,31 +157,72 @@ def _media_type(data: bytes) -> str:
         return "image/webp"
     if data[:6] in (b"GIF87a", b"GIF89a"):
         return "image/gif"
-    raise AIError("Поддерживаются только изображения JPEG, PNG, WebP и GIF.")
+    raise AIError("Поддерживаются скрины (JPEG, PNG, WebP), PDF и CSV.")
 
 
-def parse_screenshots(images: list, account_hint: str = "", today: date = None) -> list:
-    """Transactions read from screenshots (list of image bytes)."""
-    if not images:
-        raise AIError("Не выбрано ни одного скрина.")
-    if len(images) > MAX_IMAGES:
-        raise AIError(f"Не больше {MAX_IMAGES} скринов за раз.")
+def _decode_text(data: bytes) -> str:
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("latin-1")
+
+
+def _is_text_file(name: str, data: bytes) -> bool:
+    if name.lower().endswith((".csv", ".txt", ".tsv")):
+        return True
+    head = data[:2048]
+    if b"\x00" in head:
+        return False
+    try:
+        head.decode("utf-8")
+        return True
+    except UnicodeDecodeError:
+        return False
+
+
+def file_blocks(files: list) -> list:
+    """Content blocks for (filename, bytes) pairs: images, PDF documents, CSV/text."""
+    if not files:
+        raise AIError("Не выбрано ни одного файла.")
+    if len(files) > MAX_FILES:
+        raise AIError(f"Не больше {MAX_FILES} файлов за раз.")
+    blocks = []
+    for name, data in files:
+        name = name or "file"
+        if not data:
+            raise AIError(f"Файл {name} пустой.")
+        if data[:5] == b"%PDF-":
+            if len(data) > MAX_PDF_BYTES:
+                raise AIError(f"PDF {name} больше 15 МБ.")
+            blocks.append({"type": "document", "title": name, "source": {
+                "type": "base64", "media_type": "application/pdf",
+                "data": base64.standard_b64encode(data).decode("ascii")}})
+        elif _is_text_file(name, data):
+            if len(data) > MAX_TEXT_BYTES:
+                raise AIError(f"Файл {name} больше 3 МБ — выгрузите выписку за меньший период.")
+            blocks.append({"type": "text", "text": f'<file name="{name}">\n{_decode_text(data)}\n</file>'})
+        else:
+            blocks.append({"type": "image", "source": {
+                "type": "base64", "media_type": _media_type(data),
+                "data": base64.standard_b64encode(data).decode("ascii")}})
+    return blocks
+
+
+def parse_statement(files: list, date_from: date = None, today: date = None) -> list:
+    """Transactions from screenshots, PDF statements and CSV exports: [(filename, bytes)]."""
     today = today or storage.now_local().date()
-    account = account_hint.strip() or "не выбран"
-    content = []
-    for img in images:
-        content.append({"type": "image", "source": {
-            "type": "base64", "media_type": _media_type(img),
-            "data": base64.standard_b64encode(img).decode("ascii"),
-        }})
+    content = file_blocks(files)
+    period = (f"Верни только операции с датой не раньше {date_from.isoformat()}; более ранние пропусти."
+              if date_from else "Верни операции за весь период в источниках.")
     content.append({"type": "text", "text": IMPORT_PROMPT.format(
-        today=today.isoformat(), account=account,
+        today=today.isoformat(), period=period,
         expense=", ".join(EXPENSE_NAMES), income=", ".join(INCOME_NAMES),
-        account_fallback=account_hint.strip() or "«Other»",
     )})
     text = _call(
-        max_tokens=16000,
-        output_config={"effort": "medium",
+        max_tokens=64000,
+        output_config={"effort": "low",
                        "format": {"type": "json_schema", "schema": IMPORT_SCHEMA}},
         messages=[{"role": "user", "content": content}],
     )
@@ -178,10 +231,10 @@ def parse_screenshots(images: list, account_hint: str = "", today: date = None) 
     except (ValueError, KeyError, TypeError):
         logger.error(f"Unparseable import response: {text[:300]}")
         raise AIError("Не удалось разобрать ответ ИИ, попробуйте ещё раз.")
-    return clean_candidates(items, today)
+    return clean_candidates(items, today, date_from)
 
 
-def clean_candidates(items: list, today: date) -> list:
+def clean_candidates(items: list, today: date, date_from: date = None) -> list:
     """Validate AI output and convert it to storage conventions."""
     out = []
     for it in items:
@@ -197,6 +250,8 @@ def clean_candidates(items: list, today: date) -> list:
                 d = d.replace(year=d.year - 1)
             except ValueError:
                 continue
+        if date_from and d < date_from:
+            continue
         tx_type = it.get("type") if it.get("type") in storage.TX_TYPES else "expense"
         name = str(it.get("category", ""))
         allowed = INCOME_NAMES if tx_type == "income" else EXPENSE_NAMES

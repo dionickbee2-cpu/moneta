@@ -170,6 +170,9 @@ body.no-top .period,body.no-top .qadd{display:none;}
 .drop b{color:var(--txt);}
 .thumbs{display:flex;gap:6px;overflow-x:auto;margin-top:10px;}
 .thumbs img{height:84px;border-radius:8px;border:1px solid var(--bdr);flex-shrink:0;}
+.fchip{height:84px;min-width:110px;max-width:150px;border-radius:8px;border:1px solid var(--bdr);background:var(--sur);flex-shrink:0;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:4px;padding:6px;font-size:10px;color:var(--mut);text-align:center;overflow:hidden;}
+.fchip b{font-size:22px;}
+.fchip span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .imp-tools{display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px;gap:8px;font-size:12px;}
 .imp-tools label{display:flex;align-items:center;gap:6px;color:var(--mut);font-weight:600;}
 .imp-row{display:flex;gap:9px;background:var(--sur);border:1px solid var(--bdr);border-radius:12px;padding:10px;margin-bottom:6px;}
@@ -251,7 +254,7 @@ body.no-top .period,body.no-top .qadd{display:none;}
     <div class="setup-title">Добро пожаловать!</div>
     <div class="setup-sub">Коротко о том, что умеет приложение:</div>
     <div class="info-box">✍️ <b>Записи</b> — добавляйте траты здесь или просто пишите боту: <b>кофе 4.5</b>, доходы — с плюсом: <b>зарплата +3000</b>.</div>
-    <div class="info-box">📷 <b>Импорт</b> — загрузите скрины из Revolut или Sparkasse, ИИ сам разнесёт операции по датам и категориям. Вы проверяете и сохраняете.</div>
+    <div class="info-box">📎 <b>Импорт</b> — загрузите скрины, PDF-выписку или CSV из банка, ИИ сам разнесёт операции по датам и категориям. Вы проверяете и сохраняете.</div>
     <div class="info-box">🦊 <b>Финн</b> — ИИ-помощник: спросите, где вы перерасходуете и что можно оптимизировать.</div>
     <div class="info-box">💳 <b>Счета</b> — балансы вводятся вручную; расходы и доходы из приложения меняют баланс основного счёта.</div>
     <button class="big-btn" onclick="closeWelcome()">Понятно →</button>
@@ -351,16 +354,16 @@ body.no-top .period,body.no-top .qadd{display:none;}
 
 <!-- IMPORT -->
 <div class="page" id="tab-import">
-  <div class="stitle" style="margin-top:0">Банк</div>
-  <div class="chips" id="impBanks"></div>
+  <div class="stitle" style="margin-top:0">Период</div>
+  <div class="chips" id="impPeriods"></div>
   <label class="drop" for="impFile">
-    📷 <b>Выбрать скрины</b><br>
-    <span style="font-size:11px">До 10 скринов выписки или списка операций</span>
+    📎 <b>Выбрать файлы</b><br>
+    <span style="font-size:11px">Скрины, PDF-выписка или CSV из банка — до 10 файлов</span>
   </label>
-  <input type="file" id="impFile" accept="image/*" multiple style="display:none" onchange="impPick(this.files)">
+  <input type="file" id="impFile" accept="image/*,application/pdf,.pdf,.csv,text/csv,.txt" multiple style="display:none" onchange="impPick(this.files)">
   <div class="thumbs" id="impThumbs"></div>
   <button class="big-btn" id="impParseBtn" style="background:var(--blu)" onclick="impParse()" disabled>Распознать</button>
-  <div class="note">Скрины отправляются ИИ (Claude) только для распознавания и нигде не сохраняются. Перед сохранением вы проверите каждую запись.</div>
+  <div class="note">Файлы отправляются ИИ (Claude) только для распознавания и нигде не сохраняются. Выписка за длинный период может обрабатываться пару минут — можно свернуть приложение, результат дождётся вас здесь. Перед сохранением вы проверите каждую запись.</div>
   <div id="impResult"></div>
 </div>
 
@@ -499,7 +502,7 @@ const COLORS=['#b8860b','#2563eb','#16a34a','#dc2626','#7c3aed','#ea580c','#0596
 const AICONS={bank:'🏦',cash:'💵',invest:'📈',card:'💳','cash-eur':'💶','cash-usd':'💵','cash-gbp':'💷',crypto:'₿',savings:'🏧',broker:'📊',pension:'🏦'};
 const ATYPE_LABELS={bank:'Банк',card:'Карта',cash:'Наличные (€)','cash-eur':'Наличные EUR','cash-usd':'Наличные USD','cash-gbp':'Наличные GBP',invest:'Инвестиции',broker:'Брокер',crypto:'Крипта',savings:'Накопления',pension:'Пенсия'};
 const TYPE_RU={expense:'Расход',income:'Доход',transfer:'Перевод'};
-const BANKS=[['','Авто'],['Revolut','Revolut'],['Sparkasse','Sparkasse']];
+const PERIODS=[['recent','Этот и прошлый месяц'],['3m','3 месяца'],['all','Всё']];
 const SUGGESTIONS=['Как у меня дела в этом месяце?','Где я перерасходую?','Сравни с прошлым месяцем','Какие подписки можно отменить?','Как сэкономить 200 € в месяц?'];
 
 const PROD_API='https://moneta-production-31b4.up.railway.app';
@@ -908,19 +911,44 @@ function saveAcc(){
 function setPrimary(id){allAccs.forEach(a=>a.primary=false);const acc=allAccs.find(a=>a.id===id);if(acc)acc.primary=true;renderAccounts();saveAccounts();toast('Основной счёт изменён');}
 
 // ── IMPORT ─────────────────────────────────────────────────────────────────
-let impBank='', impFiles=[], impRows=[], impRecentOnly=true;
-function renderImpBanks(){
-  $('impBanks').innerHTML=BANKS.map(([v,l],i)=>`<div class="chip${impBank===v?' on':''}" onclick="impSetBank(${i})">${esc(l)}</div>`).join('');
+let impPeriod='recent', impFiles=[], impRows=[], impPollT=null;
+function renderImpPeriods(){
+  $('impPeriods').innerHTML=PERIODS.map(([v,l],i)=>`<div class="chip${impPeriod===v?' on':''}" onclick="impSetPeriod(${i})">${esc(l)}</div>`).join('');
 }
-function impSetBank(i){impBank=BANKS[i][0];renderImpBanks();}
+function impSetPeriod(i){impPeriod=PERIODS[i][0];renderImpPeriods();}
+function impDateFrom(){
+  const n=new Date();
+  if(impPeriod==='recent') return toDmy(new Date(n.getFullYear(),n.getMonth()-1,1));
+  if(impPeriod==='3m') return toDmy(new Date(n.getFullYear(),n.getMonth()-2,1));
+  return '';
+}
+function fileKind(f){
+  const n=(f.name||'').toLowerCase();
+  if(f.type==='application/pdf'||n.endsWith('.pdf')) return 'pdf';
+  if(f.type.startsWith('image/')) return 'image';
+  if(n.endsWith('.csv')||n.endsWith('.txt')||f.type.startsWith('text/')) return 'csv';
+  return '';
+}
+function fmtSize(b){return b>1048576?(b/1048576).toFixed(1)+' МБ':Math.max(1,Math.round(b/1024))+' КБ';}
 function impPick(files){
-  const list=[...files].filter(f=>f.type.startsWith('image/'));
-  if(list.length>10) toast('Можно не больше 10 скринов — взяты первые 10');
-  impFiles=list.slice(0,10);
-  $('impThumbs').innerHTML='';
-  impFiles.forEach(f=>{const img=document.createElement('img');img.src=URL.createObjectURL(f);img.onload=()=>URL.revokeObjectURL(img.src);$('impThumbs').appendChild(img);});
-  $('impParseBtn').disabled=!impFiles.length;
-  $('impParseBtn').textContent=impFiles.length?`Распознать (${impFiles.length})`:'Распознать';
+  const all=[...files];
+  const ok=all.filter(f=>fileKind(f));
+  if(ok.length<all.length) toast('Поддерживаются скрины, PDF и CSV');
+  if(ok.length>10) toast('Можно не больше 10 файлов — взяты первые 10');
+  impFiles=ok.slice(0,10);
+  const big=impFiles.find(f=>(fileKind(f)==='pdf'&&f.size>15*1048576)||(fileKind(f)==='csv'&&f.size>3*1048576));
+  if(big){toast(`${big.name} слишком большой — выгрузите выписку за меньший период`);impFiles=impFiles.filter(f=>f!==big);}
+  const box=$('impThumbs');box.innerHTML='';
+  impFiles.forEach(f=>{
+    if(fileKind(f)==='image'){const img=document.createElement('img');img.src=URL.createObjectURL(f);img.onload=()=>URL.revokeObjectURL(img.src);box.appendChild(img);}
+    else{const d=document.createElement('div');d.className='fchip';d.innerHTML=`<b>${fileKind(f)==='pdf'?'📄':'📊'}</b><span>${esc(f.name)}</span><span>${fmtSize(f.size)}</span>`;box.appendChild(d);}
+  });
+  impSetIdle();
+}
+function impSetIdle(){
+  const btn=$('impParseBtn');
+  btn.disabled=!impFiles.length;
+  btn.textContent=impFiles.length?`Распознать (${impFiles.length})`:'Распознать';
 }
 function compressImage(file){
   // Claude downsizes large images anyway; ~1.15 MP keeps text readable and uploads small
@@ -941,39 +969,59 @@ function compressImage(file){
 async function impParse(){
   if(!impFiles.length)return;
   const btn=$('impParseBtn');btn.disabled=true;
-  btn.innerHTML='<span class="spinner"></span>ИИ читает скрины…';
+  btn.innerHTML='<span class="spinner"></span>Загружаю файлы…';
   try{
     const fd=new FormData();
-    fd.append('account',impBank);
-    const blobs=await Promise.all(impFiles.map(compressImage));
-    blobs.forEach((b,i)=>fd.append('images',b,`shot${i+1}.jpg`));
-    const data=await api('/api/import/parse',{method:'POST',body:fd});
-    impRows=(data.transactions||[]).map(t=>({...t,sel:!t.duplicate&&t.type!=='transfer'}));
+    fd.append('date_from',impDateFrom());
+    for(let i=0;i<impFiles.length;i++){
+      const f=impFiles[i];
+      if(fileKind(f)==='image') fd.append('files',await compressImage(f),`shot${i+1}.jpg`);
+      else fd.append('files',f,f.name);
+    }
+    const r=await api('/api/import/parse',{method:'POST',body:fd});
+    if(r.already_running) toast('Предыдущие файлы ещё распознаются — показываю их результат');
+    lsSet(ukey('imp_job'),r.job_id);
+    impPoll(r.job_id);
+  }catch(e){toast(e.message);impSetIdle();}
+}
+function impPoll(jobId){
+  clearTimeout(impPollT);
+  const btn=$('impParseBtn');btn.disabled=true;
+  const tick=async()=>{
+    if(lsGet(ukey('imp_job'))!==jobId) return;
+    let r;
+    try{r=await api('/api/import/jobs/'+encodeURIComponent(jobId));}
+    catch(e){
+      if(e.status===404){lsDel(ukey('imp_job'));toast(e.message);impSetIdle();return;}
+      impPollT=setTimeout(tick,4000);return;  // network hiccup or app in background: keep waiting
+    }
+    if(r.status==='running'){
+      btn.innerHTML=`<span class="spinner"></span>ИИ читает файлы… ${r.elapsed} с`;
+      impPollT=setTimeout(tick,2500);return;
+    }
+    lsDel(ukey('imp_job'));impSetIdle();
+    if(r.status==='error'){toast(r.error);return;}
+    impRows=(r.transactions||[]).map(t=>({...t,sel:!t.duplicate&&t.type!=='transfer'}));
     renderImpRows();
-    if(!impRows.length) toast('На скринах не найдено операций');
-  }catch(e){toast(e.message);}
-  finally{btn.disabled=!impFiles.length;btn.textContent=impFiles.length?`Распознать (${impFiles.length})`:'Распознать';}
+    if(!impRows.length) toast('Операций за выбранный период не найдено');
+  };
+  tick();
 }
-function inRecentMonths(dmy){
-  const[d,m,y]=dmy.split('.').map(Number);
-  const n=new Date(),cur=n.getFullYear()*12+n.getMonth(),v=y*12+(m-1);
-  return v===cur||v===cur-1;
-}
-function impVisible(){return impRows.map((r,i)=>({r,i})).filter(({r})=>!impRecentOnly||inRecentMonths(r.date));}
+// Resume polling when the app comes back from the background
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&TG_USER_ID){const j=lsGet(ukey('imp_job'));if(j)impPoll(j);}
+});
 function renderImpRows(){
   const el=$('impResult');
   if(!impRows.length){el.innerHTML='';return;}
-  const vis=impVisible();
-  const hidden=impRows.length-vis.length;
   const typeOpts=v=>Object.entries(TYPE_RU).map(([k,l])=>`<option value="${k}"${k===v?' selected':''}>${l}</option>`).join('');
   const catOpts=(type,cur)=>{const cats=type==='income'?ICATS:ECATS;return (cats.includes(cur)?cats:[...cats,cur]).map(c=>`<option value="${esc(c)}"${c===cur?' selected':''}>${esc(catIcon(c)+' '+catLabel(c))}</option>`).join('');};
   el.innerHTML=`
     <div class="imp-tools">
-      <label><input type="checkbox" ${impRecentOnly?'checked':''} onchange="impRecentOnly=this.checked;renderImpRows()"> Только этот и прошлый месяц</label>
+      <span style="color:var(--mut);font-weight:600">Найдено: ${impRows.length}</span>
       <button class="link-btn" onclick="impToggleAll()">выбрать все</button>
     </div>
-    ${hidden?`<div class="note" style="margin:-4px 0 8px">Скрыто записей за другие периоды: ${hidden}</div>`:''}
-    <div id="impRows">${vis.map(({r,i})=>`
+    <div id="impRows">${impRows.map((r,i)=>`
       <div class="imp-row${r.sel?'':' off'}">
         <input type="checkbox" data-i="${i}" data-f="sel" ${r.sel?'checked':''}>
         <div class="imp-main">
@@ -986,10 +1034,10 @@ function renderImpRows(){
             <select class="fs" data-i="${i}" data-f="type">${typeOpts(r.type)}</select>
           </div>
           <div class="imp-line"><select class="fs" data-i="${i}" data-f="category">${catOpts(r.type,r.category)}</select></div>
-          <div>${r.account?`<span class="bdg">${esc(r.account)}</span>`:''}${r.duplicate?'<span class="bdg warn">возможно, уже есть</span>':''}${r.type==='transfer'?'<span class="bdg blue">перевод между счетами</span>':''}</div>
+          ${r.duplicate||r.type==='transfer'?`<div>${r.duplicate?'<span class="bdg warn">возможно, уже есть</span>':''}${r.type==='transfer'?'<span class="bdg blue">перевод между счетами</span>':''}</div>`:''}
         </div>
       </div>`).join('')}</div>
-    <button class="big-btn" id="impSaveBtn" onclick="impCommit()">Сохранить (${vis.filter(({r})=>r.sel).length})</button>`;
+    <button class="big-btn" id="impSaveBtn" onclick="impCommit()">Сохранить (${impRows.filter(r=>r.sel).length})</button>`;
 }
 $('impResult').addEventListener('change',e=>{
   const el=e.target,f=el.dataset.f;if(!f)return;
@@ -997,13 +1045,13 @@ $('impResult').addEventListener('change',e=>{
   if(f==='sel') r.sel=el.checked;
   else if(f==='amount') r.amount=parseFloat(String(el.value).replace(',','.'))||0;
   else if(f==='date'){if(el.value) r.date=isoDayToDmy(el.value);}
-  else if(f==='type'){r.type=el.value;r.category=el.value==='income'?'💡 Other income':(el.value==='transfer'?'📦 Other':'📦 Other');}
+  else if(f==='type'){r.type=el.value;r.category=el.value==='income'?'💡 Other income':'📦 Other';}
   else r[f]=el.value;
-  if(f==='sel'||f==='type'||f==='date') renderImpRows();
+  if(f==='sel'||f==='type') renderImpRows();
 });
-function impToggleAll(){const vis=impVisible();const all=vis.every(({r})=>r.sel);vis.forEach(({r})=>r.sel=!all);renderImpRows();}
+function impToggleAll(){const all=impRows.every(r=>r.sel);impRows.forEach(r=>r.sel=!all);renderImpRows();}
 async function impCommit(){
-  const rows=impVisible().map(({r})=>r).filter(r=>r.sel);
+  const rows=impRows.filter(r=>r.sel);
   if(!rows.length){toast('Ничего не выбрано');return;}
   if(rows.some(r=>!(r.amount>0))){toast('Проверьте суммы — есть пустые или нулевые');return;}
   const btn=$('impSaveBtn');btn.disabled=true;
@@ -1121,7 +1169,8 @@ function launchApp(){
   $('app').style.display='block';
   cacheLoad();chatLoad();
   $('qDate').value=toIsoDay(new Date());
-  updateMonthLabel();renderChips();renderImpBanks();renderAll();
+  updateMonthLabel();renderChips();renderImpPeriods();renderAll();
+  const pendingJob=lsGet(ukey('imp_job'));if(pendingJob) impPoll(pendingJob);
   $('logoutBtn').style.display=TG_INIT?'none':'block';
   setSyncStatus('Загрузка…','loading');
   loadData();
