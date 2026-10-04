@@ -10,6 +10,7 @@ TODAY = date(2026, 9, 27)
 @pytest.mark.parametrize("text,amount,desc,income,when", [
     ("coffee 4.5", 4.5, "coffee", False, None),
     ("4.5 coffee", 4.5, "coffee", False, None),
+    ("кофе 12,50", 12.5, "кофе", False, None),
     ("coffee 3.10", 3.1, "coffee", False, None),
     ("salary +3411", 3411, "salary", True, None),
     ("47", 47, "—", False, None),
@@ -27,7 +28,7 @@ def test_parse(text, amount, desc, income, when):
     assert e == {"amount": amount, "description": desc, "income": income, "date": when}
 
 
-@pytest.mark.parametrize("text", ["coffee", "hello world", "0", "coffee 12.05.2026", "кофе 12,50"])
+@pytest.mark.parametrize("text", ["coffee", "hello world", "0", "coffee 12.05.2026"])
 def test_no_amount(text):
     assert parse_entry(text, TODAY) is None
 

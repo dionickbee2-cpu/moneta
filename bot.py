@@ -45,7 +45,7 @@ _reminded_today = {}   # uid -> date the daily reminder was sent
 
 
 # ── INPUT PARSING ─────────────────────────────────────────────────────────────
-AMOUNT_RE = re.compile(r"^\+?\d+(?:\.\d{1,2})?$")
+AMOUNT_RE = re.compile(r"^\+?\d+(?:[.,]\d{1,2})?$")
 DATE_RE = re.compile(r"^(\d{1,2})[./](\d{1,2})(?:[./](\d{4}|\d{2}))?$")
 
 
@@ -88,7 +88,7 @@ def parse_entry(text: str, today: date):
         raw, desc = tokens[-1], " ".join(tokens[:-1])
     else:
         return None
-    amount = float(raw.lstrip("+"))
+    amount = float(raw.lstrip("+").replace(",", "."))
     if amount <= 0:
         return None
     return {"amount": amount, "description": desc or "—", "income": raw.startswith("+"), "date": tx_date}

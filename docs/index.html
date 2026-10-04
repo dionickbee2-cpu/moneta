@@ -300,7 +300,7 @@ body.no-top .period,body.no-top .qadd{display:none;}
     <button class="tc" id="tTrf" onclick="setQT('transfer')">🔄 Перевод</button>
   </div>
   <div class="qrow">
-    <input class="qi" id="qAmt" type="number" inputmode="decimal" placeholder="Сумма €" step="0.01" style="max-width:100px">
+    <input class="qi" id="qAmt" type="text" inputmode="decimal" placeholder="Сумма €" style="max-width:100px">
     <input class="qi" id="qDesc" type="text" placeholder="Описание" maxlength="120">
     <input class="qi" id="qDate" type="date" style="max-width:130px;font-size:12px">
   </div>
@@ -450,7 +450,7 @@ body.no-top .period,body.no-top .qadd{display:none;}
   <div class="modal">
     <div class="modal-head"><span class="modal-title">Изменить операцию</span><button class="modal-x" onclick="closeModal('txModal')">×</button></div>
     <div class="frow">
-      <div class="fg"><div class="fl">Сумма (€)</div><input class="fi" id="eAmt" type="number" inputmode="decimal" step="0.01"></div>
+      <div class="fg"><div class="fl">Сумма (€)</div><input class="fi" id="eAmt" type="text" inputmode="decimal"></div>
       <div class="fg"><div class="fl">Дата</div><input class="fi" id="eDate" type="date"></div>
     </div>
     <div class="fg"><div class="fl">Описание</div><input class="fi" id="eDesc" type="text" maxlength="120"></div>
@@ -474,7 +474,7 @@ body.no-top .period,body.no-top .qadd{display:none;}
     <div class="modal-head"><span class="modal-title" id="accModalTitle">Новый счёт</span><button class="modal-x" onclick="closeModal('accModal')">×</button></div>
     <div class="fg"><div class="fl">Название</div><input class="fi" id="aName" placeholder="Revolut" maxlength="60"></div>
     <div class="fg"><div class="fl">Тип</div><select class="fs" id="aType"></select></div>
-    <div class="fg"><div class="fl">Баланс (€)</div><input class="fi" type="number" inputmode="decimal" id="aBal" placeholder="0.00" step="0.01"></div>
+    <div class="fg"><div class="fl">Баланс (€)</div><input class="fi" type="text" inputmode="decimal" id="aBal" placeholder="0.00"></div>
     <button class="msave" onclick="saveAcc()">Сохранить</button>
     <div id="accDelBtn" style="display:none"><button class="mdel" onclick="deleteAccFromModal()">Удалить счёт</button></div>
   </div>
@@ -529,6 +529,10 @@ function catIcon(cat){
   return m?m[0]:'📦';
 }
 function catLabel(cat){const n=cleanCatName(cat);return CAT_RU[n]||n;}
+function amountValue(value){
+  const normalized=String(value??'').trim().replace(',','.');
+  return /^[-+]?\d+(?:\.\d{0,2})?$/.test(normalized)?Number(normalized):NaN;
+}
 function lsGet(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
 function lsDel(k){try{localStorage.removeItem(k);}catch(e){}}
@@ -616,7 +620,7 @@ function adjustPrimary(type,amount,sign){
 
 // ── QUICK ADD ──────────────────────────────────────────────────────────────
 async function quickAdd(){
-  const amt=Number($('qAmt').value);
+  const amt=amountValue($('qAmt').value);
   const desc=$('qDesc').value.trim();
   if(!(amt>0)){toast('Введите сумму');return;}
   const day=$('qDate').value||toIsoDay(new Date());
@@ -856,7 +860,7 @@ function openTxModal(id){
 }
 async function saveTx(){
   const tx=allTxs.find(t=>t.id===editTxId);if(!tx)return;
-  const amount=parseFloat(String($('eAmt').value).replace(',','.'));
+  const amount=amountValue($('eAmt').value);
   if(!(amount>0)){toast('Некорректная сумма');return;}
   const upd={amount,description:$('eDesc').value.trim()||catLabel($('eCat').value),category:$('eCat').value,
     type:$('eType').value,date:isoDayToDmy($('eDate').value||toIsoDay(new Date(tx.date)))};
@@ -902,7 +906,7 @@ function deleteAccFromModal(){
 }
 function saveAcc(){
   const name=$('aName').value.trim();if(!name){toast('Введите название');return;}
-  const bal=parseFloat(String($('aBal').value).replace(',','.'))||0;
+  const bal=amountValue($('aBal').value)||0;
   const acc=editAccId&&allAccs.find(a=>a.id===editAccId);
   if(acc){acc.name=name;acc.type=$('aType').value;acc.balance=bal;}
   else allAccs.push({id:'a'+Date.now(),name,type:$('aType').value,balance:bal,primary:!allAccs.length});
@@ -1027,7 +1031,7 @@ function renderImpRows(){
         <div class="imp-main">
           <div class="imp-line">
             <input class="fi" data-i="${i}" data-f="description" value="${esc(r.description)}" maxlength="120">
-            <input class="fi imp-amt" type="number" step="0.01" inputmode="decimal" data-i="${i}" data-f="amount" value="${esc(r.amount)}">
+            <input class="fi imp-amt" type="text" inputmode="decimal" data-i="${i}" data-f="amount" value="${esc(r.amount)}">
           </div>
           <div class="imp-line">
             <input class="fi" type="date" data-i="${i}" data-f="date" value="${esc(dmyToIsoDay(r.date))}">
@@ -1043,7 +1047,7 @@ $('impResult').addEventListener('change',e=>{
   const el=e.target,f=el.dataset.f;if(!f)return;
   const r=impRows[+el.dataset.i];if(!r)return;
   if(f==='sel') r.sel=el.checked;
-  else if(f==='amount') r.amount=parseFloat(String(el.value).replace(',','.'))||0;
+  else if(f==='amount') r.amount=amountValue(el.value)||0;
   else if(f==='date'){if(el.value) r.date=isoDayToDmy(el.value);}
   else if(f==='type'){r.type=el.value;r.category=el.value==='income'?'💡 Other income':'📦 Other';}
   else r[f]=el.value;
