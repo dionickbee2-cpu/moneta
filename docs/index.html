@@ -300,7 +300,7 @@ body.no-top .period,body.no-top .qadd{display:none;}
     <button class="tc" id="tTrf" onclick="setQT('transfer')">🔄 Перевод</button>
   </div>
   <div class="qrow">
-    <input class="qi" id="qAmt" type="text" inputmode="decimal" placeholder="Сумма €" style="max-width:100px">
+    <input class="qi" id="qAmt" type="text" inputmode="url" placeholder="Сумма €" style="max-width:100px">
     <input class="qi" id="qDesc" type="text" placeholder="Описание" maxlength="120">
     <input class="qi" id="qDate" type="date" style="max-width:130px;font-size:12px">
   </div>
@@ -450,7 +450,7 @@ body.no-top .period,body.no-top .qadd{display:none;}
   <div class="modal">
     <div class="modal-head"><span class="modal-title">Изменить операцию</span><button class="modal-x" onclick="closeModal('txModal')">×</button></div>
     <div class="frow">
-      <div class="fg"><div class="fl">Сумма (€)</div><input class="fi" id="eAmt" type="text" inputmode="decimal"></div>
+      <div class="fg"><div class="fl">Сумма (€)</div><input class="fi" id="eAmt" type="text" inputmode="url"></div>
       <div class="fg"><div class="fl">Дата</div><input class="fi" id="eDate" type="date"></div>
     </div>
     <div class="fg"><div class="fl">Описание</div><input class="fi" id="eDesc" type="text" maxlength="120"></div>
@@ -474,7 +474,7 @@ body.no-top .period,body.no-top .qadd{display:none;}
     <div class="modal-head"><span class="modal-title" id="accModalTitle">Новый счёт</span><button class="modal-x" onclick="closeModal('accModal')">×</button></div>
     <div class="fg"><div class="fl">Название</div><input class="fi" id="aName" placeholder="Revolut" maxlength="60"></div>
     <div class="fg"><div class="fl">Тип</div><select class="fs" id="aType"></select></div>
-    <div class="fg"><div class="fl">Баланс (€)</div><input class="fi" type="text" inputmode="decimal" id="aBal" placeholder="0.00"></div>
+    <div class="fg"><div class="fl">Баланс (€)</div><input class="fi" type="text" inputmode="url" id="aBal" placeholder="0.00"></div>
     <button class="msave" onclick="saveAcc()">Сохранить</button>
     <div id="accDelBtn" style="display:none"><button class="mdel" onclick="deleteAccFromModal()">Удалить счёт</button></div>
   </div>
@@ -1031,7 +1031,7 @@ function renderImpRows(){
         <div class="imp-main">
           <div class="imp-line">
             <input class="fi" data-i="${i}" data-f="description" value="${esc(r.description)}" maxlength="120">
-            <input class="fi imp-amt" type="text" inputmode="decimal" data-i="${i}" data-f="amount" value="${esc(r.amount)}">
+            <input class="fi imp-amt" type="text" inputmode="url" data-i="${i}" data-f="amount" value="${esc(r.amount)}">
           </div>
           <div class="imp-line">
             <input class="fi" type="date" data-i="${i}" data-f="date" value="${esc(dmyToIsoDay(r.date))}">
