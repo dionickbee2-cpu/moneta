@@ -616,7 +616,7 @@ function adjustPrimary(type,amount,sign){
 
 // ── QUICK ADD ──────────────────────────────────────────────────────────────
 async function quickAdd(){
-  const amt=parseFloat(String($('qAmt').value).replace(',','.'));
+  const amt=Number($('qAmt').value);
   const desc=$('qDesc').value.trim();
   if(!(amt>0)){toast('Введите сумму');return;}
   const day=$('qDate').value||toIsoDay(new Date());
